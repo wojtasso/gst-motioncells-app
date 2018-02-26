@@ -1,12 +1,15 @@
-CC = g++
-CFLAGS = -c -Wall
-LDFLAGS =
+CPP = g++
+CPPINCLUDE_DIRS = -I. -I/usr/local/include/ `pkg-config --cflags gstreamer-1.0`
+CPPFLAGS = -std=c++11 -Wall -Wextra $(CPPINCLUDE_DIRS)
 
-CFLAGS +=`pkg-config --cflags gstreamer-1.0 pkg-config --cflags glib-2.0`
-LDFLAGS += `pkg-config --libs gstreamer-1.0 pkg-config --libs glib-2.0`
- 
-main: main.o
-	g++ $(LDFLAGS) $< -o $@
+CPPOUTFILE =motion-detect
+CPPOBJS =$(CPPSOURCE:.cpp=.o)
+CPPSOURCE =$(wildcard main.cpp)
+CPPLIBS = -lgstreamer-1.0 -lgobject-2.0 -lglib-2.0
 
-main.o: main.cpp
-	g++ $(CFLAGS) $< -o $@
+all: $(CPPOUTFILE)
+
+$(CPPOUTFILE): $(CPPOBJS)
+	$(CPP) $(CPPFLAGS) $(CPPOBJS) -o $(CPPOUTFILE) `pkg-config --libs gstreamer-1.0` $(CPPLIBS)
+clean:
+	rm -f *.o $(CPPOUTFILE)
