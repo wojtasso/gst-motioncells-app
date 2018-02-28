@@ -19,7 +19,6 @@ struct customData {
     GMainLoop *loop;
 };
 
-
 static gboolean handle_keyboard(GIOChannel *source, GIOCondition cond, gpointer data)
 {
     gchar *str = NULL;
@@ -45,42 +44,68 @@ static gboolean handle_keyboard(GIOChannel *source, GIOCondition cond, gpointer 
 
 static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
 {
-    const GValue *arg1,*arg2;
-    guint z;
-    g_print("Got %s", GST_MESSAGE_SRC_NAME (msg));
-    const gchar *value, *name = GST_MESSAGE_SRC_NAME (msg);
+    guint numberOfFields;
+    const gchar *name = GST_MESSAGE_SRC_NAME(msg);
     const GstStructure * structure = gst_message_get_structure(msg);
-    string x;
-    z=gst_structure_n_fields(structure);
-    if ((string)name=="motion" && z==2) {
+    numberOfFields = gst_structure_n_fields(structure);
+
+    if ((string)name == "motion") {
+
+        const GValue *timestamp, *indices;
+        string fieldName = (string)gst_structure_nth_field_name(
+                structure,
+                numberOfFields - 1);
+
+        if (fieldName == "motion_begin") {
+            indices = gst_structure_get_value(structure, "motion_cells_indices");
+            timestamp = gst_structure_get_value(structure, "motion_begin");
+            g_printerr("Motion begin.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
+            g_printerr("Region %s \n", g_strdup_value_contents(indices));
+        } else if (fieldName == "motion") {
+            indices = gst_structure_get_value(structure, "motion_cells_indices");
+            timestamp = gst_structure_get_value(structure, "motion");
+            g_printerr("Motion.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
+            g_printerr("Region %s \n", g_strdup_value_contents(indices));
+        } else if (fieldName == "motion_finished") {
+            timestamp = gst_structure_get_value(structure, "motion_finished");
+            g_printerr("Motion finished.\nTimestamp %s \n", g_strdup_value_contents(timestamp));
+        }
+    } else if ((string)name == "sink-actual-sink-xvimage" ) {
+        // GstNavigationMessage
+        // type
+        // event
+        const GValue *type, *event;
+        type = gst_structure_get_value(structure, "type");
+        event = gst_structure_get_value(structure, "event");
+        g_printerr("Type %s \n", g_strdup_value_contents(type));
+        g_printerr("Event %s \n", g_strdup_value_contents(event));
+
+
+        //g_print("Got %s \n", GST_MESSAGE_SRC_NAME(msg));
+        //g_printerr("Number of structure fields: %d \n", numberOfFields);
+        //g_printerr("  %s \n" ,gst_structure_get_name(structure));
+        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,0));
+        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,1));
+    }
+
+        //if (numberOfFields == 2) { //motion begin
 
         //g_printerr("  %s " ,gst_structure_get_name(structure));
-        g_printerr("  %s " ,gst_structure_nth_field_name(structure,0));
+        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,0));
+        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,1));
 
         //typ = gst_structure_get_field_type(structure,"motion_cells_indices");
         //g_printerr("  %s  ",g_type_name(typ));
         //typ = gst_structure_get_field_type(structure,"motion_begin");
         //g_printerr("  %s  ",g_type_name(typ));
-        arg1 = gst_structure_get_value(structure, "motion_cells_indices");
-        arg2 = gst_structure_get_value(structure, "motion_begin");
-        value=g_strdup_value_contents(arg1);				//Odczyt współrzędnych
-        g_printerr("%s \n",value);
-        g_printerr("%s " ,gst_structure_nth_field_name(structure,1));
-        value=g_strdup_value_contents(arg2);
-        g_printerr("%s",value);
+        //arg1 = gst_structure_get_value(structure, "motion_cells_indices");
+        //arg2 = gst_structure_get_value(structure, "motion_begin");
+        //value=g_strdup_value_contents(arg1);
+        //g_printerr("%s \n",value);
+        //g_printerr("%s \n" ,gst_structure_nth_field_name(structure,1));
+        //value=g_strdup_value_contents(arg2);
+        //g_printerr("%s \n",value);
 
-        //g_object_get(motion, "motionmaskcoords", x, NULL);
-        //g_printerr("  %s", x);
-    } else if((string)name=="motion" && z==1) {
-        g_printerr("  %s " ,gst_structure_nth_field_name(structure,0));
-        arg1 = gst_structure_get_value(structure, "motion_finished");
-        value=g_strdup_value_contents(arg1);
-        g_printerr("%s \n",value);
-    }
-
-    g_printerr("\n");
-
-    //motion_cells_indices   motion_begin motion_finished
     switch (GST_MESSAGE_TYPE (msg)) {
         case GST_MESSAGE_EOS:
             g_print ("End of stream\n");
@@ -124,7 +149,7 @@ int main(int argc, char *argv[])
 
     g_object_set(data.motion, "gridx", 8, NULL );
     g_object_set(data.motion, "gridy", 8, NULL );
-    g_object_set(data.motion, "sensitivity", 0.4, NULL );
+    g_object_set(data.motion, "sensitivity", 5.0, NULL );
     g_object_set(data.motion, "threshold", 0.01, NULL );
     g_object_set(data.motion, "datafile", "plik" , NULL );
     g_object_set(data.motion, "datafileextension", "rgb" , NULL );
@@ -137,7 +162,7 @@ int main(int argc, char *argv[])
             !data.videoparse1 ||
             !data.motion ||
             !data.sink ) {
-        g_printerr ("Blad");
+        g_printerr ("Error");
         return -1;
     }
 
@@ -146,7 +171,7 @@ int main(int argc, char *argv[])
     io_stdin = g_io_channel_unix_new(fileno (stdin));
 
     data.bus_watch_id = g_io_add_watch(io_stdin, G_IO_IN, (GIOFunc)handle_keyboard, data.loop);
-    GDestroyNotify notify;
+    GDestroyNotify notify = NULL;
     gst_bus_set_sync_handler(data.bus, (GstBusSyncHandler)bus_call, &data, notify);
     g_print("%d\n", data.bus_watch_id);
     gst_object_unref(data.bus);
