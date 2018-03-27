@@ -1,10 +1,10 @@
 #include <iostream>
 #include <gst/gst.h>
+#include <gst/video/navigation.h>
 #include <glib.h>
 #include <stdio.h>
 #include <string.h>
-
-using namespace std;
+#include <vector>
 
 struct customData {
     GstElement *pipeline,
@@ -19,6 +19,15 @@ struct customData {
     GMainLoop *loop;
 };
 
+enum {
+    MOUSE_LEFT_BUTTON     = 1,
+    MOUSE_SCROLL_BUTTON   = 2,
+    MOUSE_RIGHT_BUTTON    = 3,
+    MOUSE_SCROLL_UP       = 4,
+    MOUSE_SCROLL_DOWN     = 5,
+};
+
+//Read keys typed to the terminal
 static gboolean handle_keyboard(GIOChannel *source, GIOCondition cond, gpointer data)
 {
     gchar *str = NULL;
@@ -44,17 +53,19 @@ static gboolean handle_keyboard(GIOChannel *source, GIOCondition cond, gpointer 
 
 static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
 {
-    guint numberOfFields;
+
+
     const gchar *name = GST_MESSAGE_SRC_NAME(msg);
-    const GstStructure * structure = gst_message_get_structure(msg);
-    numberOfFields = gst_structure_n_fields(structure);
 
-    if ((string)name == "motion") {
-
+    if ((std::string)name == "motion") {
+        g_print("%d \n", GST_MESSAGE_TYPE(msg));
         const GValue *timestamp, *indices;
-        string fieldName = (string)gst_structure_nth_field_name(
+        const GstStructure * structure = gst_message_get_structure(msg);
+        guint numberOfFields = gst_structure_n_fields(structure);
+
+        std::string fieldName = (std::string)gst_structure_nth_field_name(
                 structure,
-                numberOfFields - 1);
+                numberOfFields - 1); //Get the name of the last field in structure
 
         if (fieldName == "motion_begin") {
             indices = gst_structure_get_value(structure, "motion_cells_indices");
@@ -64,51 +75,60 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
         } else if (fieldName == "motion") {
             indices = gst_structure_get_value(structure, "motion_cells_indices");
             timestamp = gst_structure_get_value(structure, "motion");
-            g_printerr("Motion.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
-            g_printerr("Region %s \n", g_strdup_value_contents(indices));
+            //g_printerr("Motion.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
+            //g_printerr("Region %s \n", g_strdup_value_contents(indices));
         } else if (fieldName == "motion_finished") {
             timestamp = gst_structure_get_value(structure, "motion_finished");
-            g_printerr("Motion finished.\nTimestamp %s \n", g_strdup_value_contents(timestamp));
+            //g_printerr("Motion finished.\nTimestamp %s \n", g_strdup_value_contents(timestamp));
         }
-    } else if ((string)name == "sink-actual-sink-xvimage" ) {
-        // GstNavigationMessage
-        // type
-        // event
-        const GValue *type, *event;
-        type = gst_structure_get_value(structure, "type");
-        event = gst_structure_get_value(structure, "event");
-        g_printerr("Type %s \n", g_strdup_value_contents(type));
-        g_printerr("Event %s \n", g_strdup_value_contents(event));
+    } else if ((std::string)name == "sink-actual-sink-xvimage" ) {
+        GstNavigationMessageType nav = gst_navigation_message_get_type (msg);
+        const gchar *key;
+        GstEvent *eve;
+        gint button;
+        gdouble x, y;
 
-
-        //g_print("Got %s \n", GST_MESSAGE_SRC_NAME(msg));
-        //g_printerr("Number of structure fields: %d \n", numberOfFields);
-        //g_printerr("  %s \n" ,gst_structure_get_name(structure));
-        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,0));
-        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,1));
+        if (nav == GST_NAVIGATION_MESSAGE_EVENT) {
+            if (gst_navigation_message_parse_event(msg, &eve)) {
+                switch (gst_navigation_event_get_type(eve)) {
+                    case GST_NAVIGATION_EVENT_KEY_PRESS:
+                        if (gst_navigation_event_parse_key_event(eve, &key)) {
+                            g_printerr("Pressed key: 0x%x \n", g_ascii_tolower(key[0]));
+                            if (g_ascii_tolower(key[0]) == 'q' ||
+                                    g_ascii_tolower(key[0]) == 0x65) { //Exit on q or ESC
+                                g_main_loop_quit(data->loop);
+                            }
+                        }
+                        break;
+                    case GST_NAVIGATION_EVENT_KEY_RELEASE:
+                        if (gst_navigation_event_parse_key_event(eve, &key))
+                            g_printerr("Released key: 0x%x \n", g_ascii_tolower(key[0]));
+                        break;
+                    case GST_NAVIGATION_EVENT_MOUSE_BUTTON_PRESS:
+                        if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y)) {
+                            g_printerr("%f %f %d \n", x, y, button);
+                        }
+                        break;
+                    case GST_NAVIGATION_EVENT_MOUSE_BUTTON_RELEASE:
+                        if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y)) {
+                            g_printerr("%f %f %d \n", x, y, button);
+                        }
+                        break;
+                    case GST_NAVIGATION_EVENT_MOUSE_MOVE:
+                        if (gst_navigation_event_parse_mouse_move_event(eve, &x, &y)) {
+                            g_printerr("%f %f \n", x, y);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
     }
-
-        //if (numberOfFields == 2) { //motion begin
-
-        //g_printerr("  %s " ,gst_structure_get_name(structure));
-        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,0));
-        //g_printerr("  %s \n", gst_structure_nth_field_name(structure,1));
-
-        //typ = gst_structure_get_field_type(structure,"motion_cells_indices");
-        //g_printerr("  %s  ",g_type_name(typ));
-        //typ = gst_structure_get_field_type(structure,"motion_begin");
-        //g_printerr("  %s  ",g_type_name(typ));
-        //arg1 = gst_structure_get_value(structure, "motion_cells_indices");
-        //arg2 = gst_structure_get_value(structure, "motion_begin");
-        //value=g_strdup_value_contents(arg1);
-        //g_printerr("%s \n",value);
-        //g_printerr("%s \n" ,gst_structure_nth_field_name(structure,1));
-        //value=g_strdup_value_contents(arg2);
-        //g_printerr("%s \n",value);
 
     switch (GST_MESSAGE_TYPE (msg)) {
         case GST_MESSAGE_EOS:
-            g_print ("End of stream\n");
+            //g_print ("End of stream\n");
             g_main_loop_quit (data->loop);
             break;
         case GST_MESSAGE_ERROR:
@@ -133,9 +153,7 @@ int main(int argc, char *argv[])
 {
     struct customData data;
     GIOChannel *io_stdin;
-
     gst_init(&argc, &argv);
-
     data.loop = g_main_loop_new (NULL, FALSE);
 
     data.pipeline = gst_pipeline_new ("streaming");
