@@ -1,8 +1,10 @@
 #include <iostream>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 #include <gst/video/navigation.h>
+#include <cairo.h>
+#include <cairo-gobject.h>
 #include <glib.h>
-#include <stdio.h>
 #include <string.h>
 #include <vector>
 
@@ -12,12 +14,20 @@ struct customData {
                *videoparse1,
                *motion,
                *videoparse2,
+               *overlay,
+               *videoparse3,
                *sink;
     GstBus *bus;
     guint bus_watch_id;
 
     GMainLoop *loop;
 };
+
+typedef struct
+{
+    gboolean valid;
+    GstVideoInfo vinfo;
+} CairoOverlayState;
 
 enum {
     MOUSE_LEFT_BUTTON     = 1,
@@ -51,10 +61,34 @@ static gboolean handle_keyboard(GIOChannel *source, GIOCondition cond, gpointer 
     return TRUE;
 }
 
+// Store the information from the caps that we are interested in
+static void prepare_overlay(GstElement * overlay, GstCaps * caps,
+        gpointer user_data)
+{
+    CairoOverlayState *state = (CairoOverlayState *) user_data;
+
+    state->valid = gst_video_info_from_caps (&state->vinfo, caps);
+}
+
+static void draw_overlay(GstElement * overlay, cairo_t * cr, guint64 timestamp,
+        guint64 duration, gpointer user_data)
+{
+    CairoOverlayState *s = (CairoOverlayState *)user_data;
+    int width, height;
+
+    if (!s->valid)
+        return;
+
+    width = GST_VIDEO_INFO_WIDTH(&s->vinfo);
+    height = GST_VIDEO_INFO_HEIGHT(&s->vinfo);
+
+    cairo_rectangle(cr, 0, 0, 300, 240);
+    cairo_set_source_rgba(cr, 0.9, 0.0, 0.1, 0.25);
+    cairo_fill(cr);
+}
+
 static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
 {
-
-
     const gchar *name = GST_MESSAGE_SRC_NAME(msg);
 
     if ((std::string)name == "motion") {
@@ -81,7 +115,7 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
             timestamp = gst_structure_get_value(structure, "motion_finished");
             //g_printerr("Motion finished.\nTimestamp %s \n", g_strdup_value_contents(timestamp));
         }
-    } else if ((std::string)name == "sink-actual-sink-xvimage" ) {
+    } else if ((std::string)name == "sink" ) {
         GstNavigationMessageType nav = gst_navigation_message_get_type (msg);
         const gchar *key;
         GstEvent *eve;
@@ -145,7 +179,6 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
         default:
             break;
     }
-
     return TRUE;
 }
 
@@ -161,7 +194,9 @@ int main(int argc, char *argv[])
     data.videoparse1 = gst_element_factory_make("autovideoconvert","videoparse1");
     data.motion = gst_element_factory_make("motioncells", "motion");
     data.videoparse2 = gst_element_factory_make("autovideoconvert", "videoparse2");
-    data.sink = gst_element_factory_make ("autovideosink", "sink");
+    data.overlay = gst_element_factory_make("cairooverlay", "overlay");
+    data.videoparse3 = gst_element_factory_make("autovideoconvert", "videoparse3");
+    data.sink = gst_element_factory_make ("xvimagesink", "sink");
 
     g_object_set(data.sink, "sync", false, NULL);
 
@@ -175,10 +210,22 @@ int main(int argc, char *argv[])
     g_object_set(data.motion, "postallmotion", false, NULL);
     //g_object_set(data.motion, "motionmaskcoords", "1:1,5:5", NULL);
 
+    // allocate on heap for pedagogical reasons, makes code easier to transfer
+    CairoOverlayState *overlay_state = g_new0(CairoOverlayState, 1);
+
+    // Hook up the neccesary signals for cairooverlay
+    g_signal_connect(data.overlay, "draw",
+            G_CALLBACK(draw_overlay), overlay_state);
+    g_signal_connect(data.overlay, "caps-changed",
+            G_CALLBACK (prepare_overlay), overlay_state);
+
     if (!data.pipeline ||
             !data.source ||
             !data.videoparse1 ||
             !data.motion ||
+            !data.videoparse2 ||
+            !data.overlay ||
+            !data.videoparse3 ||
             !data.sink ) {
         g_printerr ("Error");
         return -1;
@@ -199,12 +246,16 @@ int main(int argc, char *argv[])
             data.videoparse1,
             data.motion,
             data.videoparse2,
+            data.overlay,
+            data.videoparse3,
             data.sink,
             NULL);
     gst_element_link_many(data.source,
             data.videoparse1,
             data.motion,
             data.videoparse2,
+            data.overlay,
+            data.videoparse3,
             data.sink,
             NULL);
 

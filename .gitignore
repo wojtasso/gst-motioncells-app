@@ -2,3 +2,4 @@ tags
 *.o
 *.swp
 motion-detect
+.clang_complete
