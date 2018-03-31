@@ -5,8 +5,12 @@
 #include <cairo.h>
 #include <cairo-gobject.h>
 #include <glib.h>
-#include <string.h>
-#include <vector>
+
+typedef struct
+{
+    gboolean valid;
+    GstVideoInfo vinfo;
+} CairoOverlayState;
 
 struct customData {
     GstElement *pipeline,
@@ -19,15 +23,11 @@ struct customData {
                *sink;
     GstBus *bus;
     guint bus_watch_id;
-
     GMainLoop *loop;
-};
+    GstVideoRectangle *rect;
+    CairoOverlayState *overlay_state;
 
-typedef struct
-{
-    gboolean valid;
-    GstVideoInfo vinfo;
-} CairoOverlayState;
+};
 
 enum {
     MOUSE_LEFT_BUTTON     = 1,
@@ -65,7 +65,7 @@ static gboolean handle_keyboard(GIOChannel *source, GIOCondition cond, gpointer 
 static void prepare_overlay(GstElement * overlay, GstCaps * caps,
         gpointer user_data)
 {
-    CairoOverlayState *state = (CairoOverlayState *) user_data;
+    CairoOverlayState *state = (CairoOverlayState *)user_data;
 
     state->valid = gst_video_info_from_caps (&state->vinfo, caps);
 }
@@ -73,16 +73,16 @@ static void prepare_overlay(GstElement * overlay, GstCaps * caps,
 static void draw_overlay(GstElement * overlay, cairo_t * cr, guint64 timestamp,
         guint64 duration, gpointer user_data)
 {
-    CairoOverlayState *s = (CairoOverlayState *)user_data;
-    int width, height;
+    customData *data = (customData *)user_data;
 
-    if (!s->valid)
+    if (!data->overlay_state->valid)
         return;
 
-    width = GST_VIDEO_INFO_WIDTH(&s->vinfo);
-    height = GST_VIDEO_INFO_HEIGHT(&s->vinfo);
-
-    cairo_rectangle(cr, 0, 0, 300, 240);
+    cairo_rectangle(cr,
+            data->rect->x,
+            data->rect->y,
+            data->rect->w,
+            data->rect->h);
     cairo_set_source_rgba(cr, 0.9, 0.0, 0.1, 0.25);
     cairo_fill(cr);
 }
@@ -92,7 +92,6 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
     const gchar *name = GST_MESSAGE_SRC_NAME(msg);
 
     if ((std::string)name == "motion") {
-        g_print("%d \n", GST_MESSAGE_TYPE(msg));
         const GValue *timestamp, *indices;
         const GstStructure * structure = gst_message_get_structure(msg);
         guint numberOfFields = gst_structure_n_fields(structure);
@@ -104,23 +103,24 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
         if (fieldName == "motion_begin") {
             indices = gst_structure_get_value(structure, "motion_cells_indices");
             timestamp = gst_structure_get_value(structure, "motion_begin");
-            g_printerr("Motion begin.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
-            g_printerr("Region %s \n", g_strdup_value_contents(indices));
+            g_print("Motion begin.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
+            g_print("Region %s \n", g_strdup_value_contents(indices));
         } else if (fieldName == "motion") {
             indices = gst_structure_get_value(structure, "motion_cells_indices");
             timestamp = gst_structure_get_value(structure, "motion");
-            //g_printerr("Motion.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
-            //g_printerr("Region %s \n", g_strdup_value_contents(indices));
+            g_printerr("Motion.\nTimestamp %s, ", g_strdup_value_contents(timestamp));
+            g_printerr("Region %s \n", g_strdup_value_contents(indices));
         } else if (fieldName == "motion_finished") {
             timestamp = gst_structure_get_value(structure, "motion_finished");
-            //g_printerr("Motion finished.\nTimestamp %s \n", g_strdup_value_contents(timestamp));
+            g_printerr("Motion finished.\nTimestamp %s \n", g_strdup_value_contents(timestamp));
         }
     } else if ((std::string)name == "sink" ) {
-        GstNavigationMessageType nav = gst_navigation_message_get_type (msg);
+        GstNavigationMessageType nav = gst_navigation_message_get_type(msg);
         const gchar *key;
         GstEvent *eve;
         gint button;
         gdouble x, y;
+        static bool drawFlag = false;
 
         if (nav == GST_NAVIGATION_MESSAGE_EVENT) {
             if (gst_navigation_message_parse_event(msg, &eve)) {
@@ -136,23 +136,48 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
                         break;
                     case GST_NAVIGATION_EVENT_KEY_RELEASE:
                         if (gst_navigation_event_parse_key_event(eve, &key))
-                            g_printerr("Released key: 0x%x \n", g_ascii_tolower(key[0]));
+                            g_print("Released key: 0x%x \n", g_ascii_tolower(key[0]));
                         break;
                     case GST_NAVIGATION_EVENT_MOUSE_BUTTON_PRESS:
-                        if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y)) {
-                            g_printerr("%f %f %d \n", x, y, button);
+                        if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y) &&
+                                button == MOUSE_LEFT_BUTTON) {
+                            drawFlag = true;
+                            data->rect->x = x;
+                            data->rect->y = y;
+                            g_print("%f %f %d \n", x, y, button);
+                            g_object_set(data->motion, "calculatemotion", true, NULL);
                         }
+                        //TODO: Motionmaskcoords doesn't work!
+                        if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y) &&
+                                button == MOUSE_SCROLL_BUTTON) {
+                            g_object_set(data->motion, "motionmaskcoords", "0:0:1:1", NULL);
+                        }
+
                         break;
                     case GST_NAVIGATION_EVENT_MOUSE_BUTTON_RELEASE:
-                        if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y)) {
-                            g_printerr("%f %f %d \n", x, y, button);
+                        if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y) &&
+                                button == MOUSE_LEFT_BUTTON) {
+                            drawFlag = false;
+                            data->rect->w = x - data->rect->x;
+                            data->rect->h = y - data->rect->y;
+                            g_print("%f %f %d \n", x, y, button);
                         }
                         break;
                     case GST_NAVIGATION_EVENT_MOUSE_MOVE:
+                        {
+                        gchar *tmp;
+                        g_object_get(data->motion, "motionmaskcoords", &tmp, NULL);
+                        g_print("coords %s \n \n", tmp);
+
                         if (gst_navigation_event_parse_mouse_move_event(eve, &x, &y)) {
-                            g_printerr("%f %f \n", x, y);
+                            if (drawFlag) {
+                                data->rect->w = x - data->rect->x;
+                                data->rect->h = y - data->rect->y;
+                            }
+                            g_print("%f %f \n", x, y);
                         }
                         break;
+                        }
                     default:
                         break;
                 }
@@ -202,22 +227,20 @@ int main(int argc, char *argv[])
 
     g_object_set(data.motion, "gridx", 8, NULL );
     g_object_set(data.motion, "gridy", 8, NULL );
-    g_object_set(data.motion, "sensitivity", 5.0, NULL );
-    g_object_set(data.motion, "threshold", 0.01, NULL );
-    g_object_set(data.motion, "datafile", "plik" , NULL );
-    g_object_set(data.motion, "datafileextension", "rgb" , NULL );
-    g_object_set(data.motion, "gap", 1 , NULL);
-    g_object_set(data.motion, "postallmotion", false, NULL);
-    //g_object_set(data.motion, "motionmaskcoords", "1:1,5:5", NULL);
+    g_object_set(data.motion, "sensitivity", 3.0, NULL );
+    g_object_set(data.motion, "threshold", 0.001, NULL );
+    g_object_set(data.motion, "gap", 4 , NULL);
+    g_object_set(data.motion, "postallmotion", true, NULL);
 
     // allocate on heap for pedagogical reasons, makes code easier to transfer
-    CairoOverlayState *overlay_state = g_new0(CairoOverlayState, 1);
+    data.overlay_state = g_new0(CairoOverlayState, 1);
+    data.rect = g_new0(GstVideoRectangle, 1);
 
     // Hook up the neccesary signals for cairooverlay
     g_signal_connect(data.overlay, "draw",
-            G_CALLBACK(draw_overlay), overlay_state);
+            G_CALLBACK(draw_overlay), &data);
     g_signal_connect(data.overlay, "caps-changed",
-            G_CALLBACK (prepare_overlay), overlay_state);
+            G_CALLBACK (prepare_overlay), data.overlay_state);
 
     if (!data.pipeline ||
             !data.source ||
