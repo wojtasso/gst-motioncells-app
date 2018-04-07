@@ -42,11 +42,11 @@ Motion::Motion(int argc, char *argv[])
 
     g_object_set(data.sink, "sync", false, NULL);
 
-    g_object_set(data.motion, "gridx", 8, NULL );
-    g_object_set(data.motion, "gridy", 8, NULL );
-    g_object_set(data.motion, "sensitivity", 3.0, NULL );
-    g_object_set(data.motion, "threshold", 0.001, NULL );
-    g_object_set(data.motion, "gap", 4 , NULL);
+    g_object_set(data.motion, "gridx", 8, NULL);
+    g_object_set(data.motion, "gridy", 8, NULL);
+    g_object_set(data.motion, "sensitivity", 0.6f, NULL);
+    g_object_set(data.motion, "threshold", 0.001, NULL);
+    g_object_set(data.motion, "gap", 4, NULL);
     g_object_set(data.motion, "postallmotion", true, NULL);
 
     // allocate on heap for pedagogical reasons, makes code easier to transfer
@@ -72,7 +72,7 @@ Motion::Motion(int argc, char *argv[])
             !data.videoparse3 ||
             !data.sink ) {
         g_printerr ("Error");
-        //return -1;
+        exit(EXIT_FAILURE);
     }
 
     data.bus = gst_pipeline_get_bus(GST_PIPELINE (data.pipeline));
