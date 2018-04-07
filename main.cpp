@@ -6,6 +6,9 @@
 #include <cairo-gobject.h>
 #include <glib.h>
 
+
+#define UDPSRC_CAPS "application/x-rtp, payload=127"
+
 typedef struct
 {
     gboolean valid;
@@ -15,6 +18,8 @@ typedef struct
 struct customData {
     GstElement *pipeline,
                *source,
+               *rtpjpeg,
+               *decoder,
                *videoparse1,
                *motion,
                *videoparse2,
@@ -147,7 +152,7 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, customData *data)
                             g_print("%f %f %d \n", x, y, button);
                             g_object_set(data->motion, "calculatemotion", true, NULL);
                         }
-                        //TODO: Motionmaskcoords doesn't work!
+                        //TODO: Motionmaskcoords doesn't work! Fixed in gstreamer-plugins-bad ver. 1.8.3 ?
                         if (gst_navigation_event_parse_mouse_button_event(eve, &button, &x, &y) &&
                                 button == MOUSE_SCROLL_BUTTON) {
                             g_object_set(data->motion, "motionmaskcoords", "0:0:1:1", NULL);
@@ -215,7 +220,25 @@ int main(int argc, char *argv[])
     data.loop = g_main_loop_new (NULL, FALSE);
 
     data.pipeline = gst_pipeline_new ("streaming");
+#ifdef UDPSRC
+    std::cout << "Read video from UDP" << std::endl;
+    data.source = gst_element_factory_make ("udpsrc","videosource");
+    data.rtpjpeg = gst_element_factory_make ("rtph264depay", "rtp");
+    data.decoder = gst_element_factory_make ("avdec_h264", "jpegdecoder");
+
+    g_object_set(data.source, "port", 5000, NULL);
+    gchar *udpsrc_caps_text;
+    GstCaps *udpsrc_caps;
+    udpsrc_caps_text = g_strdup_printf(UDPSRC_CAPS);
+    udpsrc_caps = gst_caps_from_string(udpsrc_caps_text);
+    g_object_set(data.source, "caps", udpsrc_caps, NULL);
+    gst_caps_unref(udpsrc_caps);
+    g_free(udpsrc_caps_text);
+#else
+    std::cout << "Read video from /dev/video0" << std::endl;
     data.source = gst_element_factory_make ("v4l2src","videosource");
+#endif
+
     data.videoparse1 = gst_element_factory_make("autovideoconvert","videoparse1");
     data.motion = gst_element_factory_make("motioncells", "motion");
     data.videoparse2 = gst_element_factory_make("autovideoconvert", "videoparse2");
@@ -244,6 +267,10 @@ int main(int argc, char *argv[])
 
     if (!data.pipeline ||
             !data.source ||
+#ifdef UDPSRC
+            !data.rtpjpeg ||
+            !data.decoder ||
+#endif
             !data.videoparse1 ||
             !data.motion ||
             !data.videoparse2 ||
@@ -266,6 +293,10 @@ int main(int argc, char *argv[])
 
     gst_bin_add_many(GST_BIN(data.pipeline),
             data.source,
+#ifdef UDPSRC
+            data.rtpjpeg,
+            data.decoder,
+#endif
             data.videoparse1,
             data.motion,
             data.videoparse2,
@@ -274,6 +305,10 @@ int main(int argc, char *argv[])
             data.sink,
             NULL);
     gst_element_link_many(data.source,
+#ifdef UDPSRC
+            data.rtpjpeg,
+            data.decoder,
+#endif
             data.videoparse1,
             data.motion,
             data.videoparse2,
