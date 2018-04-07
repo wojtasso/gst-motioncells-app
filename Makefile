@@ -5,7 +5,7 @@ LDFLAGS = `pkg-config --libs gstreamer-video-1.0 cairo`
 
 CPPOUTFILE =motion-detect
 CPPOBJS =$(CPPSOURCE:.cpp=.o)
-CPPSOURCE =main.cpp
+CPPSOURCE =main.cpp Motion.cpp
 
 all: $(CPPOUTFILE)
 
